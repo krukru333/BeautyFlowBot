@@ -1,257 +1,153 @@
-import time
-from datetime import datetime
+import os
 import requests
+import threading
+from flask import Flask
 
-# 1. Вставьте ваш токен от BotFather в кавычки
-TOKEN = "9200361744:AAGZd7cuSCgdm3Cw2tpU3QKqQbGNJennAvU"
-# 2. Вставьте ваш числовой Telegram ID, чтобы получать уведомления администратора
-ADMIN_CHAT_ID = 7050276939  # Замените на ваш настоящий ID (число без кавычек)
+# Замените на токен вашего бота от BotFather или используйте переменные окружения
+TOKEN = os.getenv "9200361744:AAGZd7cuSCgdm3Cw2tpU3QKqQbGNJennAvU"
+ADMIN_CHAT_ID = os.getenv "7050276939"
 
-URL = f"https://api.telegram.org/bot{TOKEN}"
+BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
-user_sessions = {}
+# --- НАСТРОЙКИ САЛОНА ---
+SERVICES = {
+    "1": {"name": "Женская стрижка", "price": "500 грн"},
+    "2": {"name": "Маникюр", "price": "400 грн"},
+    "3": {"name": "Окрашивание волос", "price": "1200 грн"},
+    "4": {"name": "Коррекция бровей", "price": "250 грн"}
+}
 
+MASTERS = {
+    "1": "Анна (Топ-мастер)",
+    "2": "Катерина (Маникюр/Педикюр)",
+    "3": "Мария (Бровист)",
+    "4": "Елена (Парикмахер-стилист)"
+}
+
+user_data = {}
+
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "BeautyFlow Bot is running 24/7!"
+
+
+# --- ФУНКЦИИ TELEGRAM API ---
 def send_message(chat_id, text, reply_markup=None):
-    url = f"{URL}/sendMessage"
-    payload = {
-        "chat_id": chat_id, 
-        "text": text, 
-        "parse_mode": "HTML"
-    }
+    url = f"{BASE_URL}/sendMessage"
+    payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if reply_markup:
         payload["reply_markup"] = reply_markup
-    
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print("Помилка відправки:", e)
+    requests.post(url, json=payload)
 
-def save_booking(user_id, user_name, service, master, date, time_slot):
-    """Сохранение записи в файл bookings.txt и уведомление админа"""
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry = f"{user_id}|{user_name}|{service}|{master}|{date}|{time_slot}|{now}\n"
+def save_booking(booking_info):
     with open("bookings.txt", "a", encoding="utf-8") as f:
-        f.write(entry)
-    
-    # Отправка уведомления администратору
-    admin_text = (
-        f"🔔 <b>Новий запис у салоні!</b>\n\n"
-        f"👤 Клієнт: {user_name} (ID: {user_id})\n"
-        f"💅 Послуга: {service}\n"
-        f"👩‍🎨 Майстер: {master}\n"
-        f"📅 Дата: {date}\n"
-        f"⏰ Час: {time_slot}"
-    )
-    send_message(ADMIN_CHAT_ID, admin_text)
+        f.write(booking_info + "\n")
 
-def get_user_bookings(user_id):
-    """Получение списка записей конкретного пользователя"""
-    try:
-        with open("bookings.txt", "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        user_list = []
-        for line in lines:
-            parts = line.strip().split("|")
-            if len(parts) >= 7 and parts[0] == str(user_id):
-                user_list.append({
-                    "service": parts[2], 
-                    "master": parts[3], 
-                    "date": parts[4], 
-                    "time": parts[5], 
-                    "name": parts[1]
-                })
-        return user_list
-    except FileNotFoundError:
-        return []
 
-def cancel_user_booking(user_id, service_to_cancel):
-    """Отмена записи и уведомление администратора"""
-    try:
-        with open("bookings.txt", "r", encoding="utf-8") as f:
-            lines = f.readlines()
-        
-        new_lines = []
-        cancelled_info = None
-        cancelled = False
-        
-        for line in lines:
-            parts = line.strip().split("|")
-            if len(parts) >= 7 and parts[0] == str(user_id) and parts[2] == service_to_cancel and not cancelled:
-                cancelled = True
-                cancelled_info = {"name": parts[1], "service": parts[2], "master": parts[3], "date": parts[4], "time": parts[5]}
-                continue
-            new_lines.append(line)
+# --- ОБРАБОТКА СООБЩЕНИЙ ---
+def handle_update(update):
+    if "message" in update:
+        msg = update["message"]
+        chat_id = msg["chat"]["id"]
+        text = msg.get("text", "")
+
+        if text == "/start":
+            user_data[chat_id] = {}
+            services_text = "✨ <b>Добро пожаловать в салон красоты!</b>\nВыберите услугу:\n\n"
+            keyboard_inline = []
+            for key, val in SERVICES.items():
+                services_text += f"{key}. {val['name']} — <b>{val['price']}</b>\n"
+                keyboard_inline.append([{"text": f"{val['name']} ({val['price']})", "callback_data": f"service_{key}"}])
             
-        with open("bookings.txt", "w", encoding="utf-8") as f:
-            f.writelines(new_lines)
-            
-        # Если отмена прошла успешно — уведомляем админа
-        if cancelled and cancelled_info:
-            admin_text = (
-                f"❌ <b>Скасування запису!</b>\n\n"
-                f"👤 Клієнт: {cancelled_info['name']} (ID: {user_id})\n"
-                f"💅 Послуга: {cancelled_info['service']}\n"
-                f"👩‍🎨 Майстер: {cancelled_info['master']}\n"
-                f"📅 Дата: {cancelled_info['date']}\n"
-                f"⏰ Час: {cancelled_info['time']}"
+            send_message(chat_id, services_text, {"inline_keyboard": keyboard_inline})
+
+        elif chat_id in user_data and user_data[chat_id].get("step") == "wait_time":
+            user_data[chat_id]["time"] = text
+            client_name = msg["from"].get("first_name", "Клиент")
+            username = msg["from"].get("username", "нет юзернейма")
+            service = user_data[chat_id].get("service")
+            master = user_data[chat_id].get("master")
+            time_slot = user_data[chat_id].get("time")
+
+            booking_str = f"Клиент: {client_name} (@{username}) | Услуга: {service} | Мастер: {master} | Время: {time_slot}"
+            save_booking(booking_str)
+
+            success_text = (
+                f"✅ <b>Запись успешно оформлена!</b>\n\n"
+                f"💇‍♀️ Услуга: {service}\n"
+                f"✨ Мастер: {master}\n"
+                f"🕒 Время: {time_slot}\n\n"
+                f"Мы ждем вас в салоне!"
             )
-            send_message(ADMIN_CHAT_ID, admin_text)
+            send_message(chat_id, success_text)
+
+            if ADMIN_CHAT_ID != "ВАШ_CHAT_ID":
+                admin_text = (
+                    f"🔔 <b>Новая запись в салон!</b>\n\n"
+                    f"👤 Клиент: {client_name} (@{username})\n"
+                    f"💇‍♀️ Услуга: {service}\n"
+                    f"✨ Мастер: {master}\n"
+                    f"🕒 Время: {time_slot}"
+                )
+                send_message(ADMIN_CHAT_ID, admin_text)
+
+            del user_data[chat_id]
+
+    elif "callback_query" in update:
+        query = update["callback_query"]
+        chat_id = query["message"]["chat"]["id"]
+        data = query["data"]
+
+        if chat_id not in user_data:
+            user_data[chat_id] = {}
+
+        if data.startswith("service_"):
+            s_key = data.split("_")[1]
+            user_data[chat_id]["service"] = SERVICES[s_key]["name"]
+            user_data[chat_id]["price"] = SERVICES[s_key]["price"]
+
+            masters_text = f"Вы выбрали: <b>{user_data[chat_id]['service']}</b>\nТеперь выберите мастера:"
+            keyboard_inline = []
+            for key, val in MASTERS.items():
+                keyboard_inline.append([{"text": val, "callback_data": f"master_{key}"}])
             
-        return cancelled
-    except FileNotFoundError:
-        return False
+            send_message(chat_id, masters_text, {"inline_keyboard": keyboard_inline})
 
-def main():
-    print("🚀 Бот BeautyFlow з адмін-сповіщеннями запущен! Очікування повідомлень...")
-    offset = None
-    
-    main_keyboard = {
-        "keyboard": [
-            [{"text": "💅 Записатися на процедуру"}],
-            [{"text": "📋 Мої записи"}, {"text": "ℹ️ Наші послуги"}],
-            [{"text": "📍 Контакти салону"}]
-        ],
-        "resize_keyboard": True
-    }
+        elif data.startswith("master_"):
+            m_key = data.split("_")[1]
+            user_data[chat_id]["master"] = MASTERS[m_key]
 
-    services_keyboard = {
-        "keyboard": [
-            [{"text": "💅 Манікюр"}, {"text": "💇‍♀️ Стрижка"}],
-            [{"text": "💄 Макіяж"}, {"text": "⬅️ Назад до меню"}]
-        ],
-        "resize_keyboard": True
-    }
+            send_message(chat_id, f"Мастер: <b>{user_data[chat_id]['master']}</b>\nВведите удобную дату и время визита (например: <i>Завтра в 14:00</i>):")
+            user_data[chat_id]["step"] = "wait_time"
 
-    masters_keyboard = {
-        "keyboard": [
-            [{"text": "👩‍🦰 Анна (ТоП-майстер)"}, {"text": "👩‍🎨 Марія (Майстер)"}],
-            [{"text": "⬅️ Назад до послуг"}]
-        ],
-        "resize_keyboard": True
-    }
 
-    dates_keyboard = {
-        "keyboard": [
-            [{"text": "Сьогодні"}, {"text": "Завтра"}],
-            [{"text": "Післязавтра"}],
-            [{"text": "⬅️ Назад до майстрів"}]
-        ],
-        "resize_keyboard": True
-    }
-
-    time_keyboard = {
-        "keyboard": [
-            [{"text": "10:00"}, {"text": "12:00"}, {"text": "15:00"}],
-            [{"text": "17:00"}, {"text": "19:00"}],
-            [{"text": "⬅️ Назад до дат"}]
-        ],
-        "resize_keyboard": True
-    }
-
+# --- ЦИКЛ БОТА ---
+def run_bot():
+    offset = 0
+    print("Telegram бот запущен в фоновом режиме.")
     while True:
         try:
-            response = requests.get(f"{URL}/getUpdates", params={"offset": offset, "timeout": 30}, timeout=35)
-            data = response.json()
-            updates = data.get("result", [])
-            
-            for update in updates:
-                offset = update["update_id"] + 1
-                if "message" in update and "text" in update["message"]:
-                    chat_id = update["message"]["chat"]["id"]
-                    text = update["message"]["text"]
-                    user_name = update["message"]["from"].get("first_name", "Користувач")
-                    
-                    if chat_id not in user_sessions:
-                        user_sessions[chat_id] = {"step": "menu"}
-                    
-                    state = user_sessions[chat_id]
+            url = f"{BASE_URL}/getUpdates?offset={offset}&timeout=30"
+            response = requests.get(url).json()
 
-                    if text in ["/start", "⬅️ Назад до меню"]:
-                        state["step"] = "menu"
-                        send_message(
-                            chat_id, 
-                            f"Вітаю, <b>{user_name}</b>! 👋\n\nЛаскаво просимо до салонного боту <b>BeautyFlow Bot</b>. Оберіть потрібну дію в меню нижче:",
-                            reply_markup=main_keyboard
-                        )
-                    elif text == "💅 Записатися на процедуру":
-                        state["step"] = "service"
-                        send_message(chat_id, "<b>Крок 1/4:</b> Оберіть категорію процедури:", reply_markup=services_keyboard)
-                    elif state["step"] == "service" and text in ["💅 Манікюр", "💇‍♀️ Стрижка", "💄 Макіяж"]:
-                        state["service"] = text
-                        state["step"] = "master"
-                        send_message(chat_id, f"Ви обрали: <b>{text}</b>.\n\n<b>Крок 2/4:</b> Оберіть майстра:", reply_markup=masters_keyboard)
-                    elif text == "⬅️ Назад до послуг":
-                        state["step"] = "service"
-                        send_message(chat_id, "Оберіть категорію процедури:", reply_markup=services_keyboard)
-                    elif state["step"] == "master" and text in ["👩‍🦰 Анна (ТоП-майстер)", "👩‍🎨 Марія (Майстер)"]:
-                        state["master"] = text
-                        state["step"] = "date"
-                        send_message(chat_id, f"Майстер: <b>{text}</b>.\n\n<b>Крок 3/4:</b> Оберіть зручну дату:", reply_markup=dates_keyboard)
-                    elif text == "⬅️ Назад до майстрів":
-                        state["step"] = "master"
-                        send_message(chat_id, "Оберіть майстра:", reply_markup=masters_keyboard)
-                    elif state["step"] == "date" and text in ["Сьогодні", "Завтра", "Післязавтра"]:
-                        state["date"] = text
-                        state["step"] = "time"
-                        send_message(chat_id, f"Дата: <b>{text}</b>.\n\n<b>Крок 4/4:</b> Оберіть час візиту:", reply_markup=time_keyboard)
-                    elif text == "⬅️ Назад до дат":
-                        state["step"] = "date"
-                        send_message(chat_id, "Оберіть зручну дату:", reply_markup=dates_keyboard)
-                    elif state["step"] == "time" and text in ["10:00", "12:00", "15:00", "17:00", "19:00"]:
-                        state["time"] = text
-                        save_booking(chat_id, user_name, state["service"], state["master"], state["date"], state["time"])
-                        state["step"] = "menu"
-                        send_message(
-                            chat_id, 
-                            f"✅ <b>Вітаємо, ви успішно записані!</b>\n\n"
-                            f"💅 <b>Послуга:</b> {state['service']}\n"
-                            f"👤 <b>Майстер:</b> {state['master']}\n"
-                            f"📅 <b>Дата:</b> {state['date']}\n"
-                            f"⏰ <b>Час:</b> {state['time']}\n\n"
-                            f"Адміністратор вже отримав сповіщення про ваш візит. Чекаємо на вас у салоні BeautyFlow! 🌸",
-                            reply_markup=main_keyboard
-                        )
-                    elif text == "📋 Мої записи":
-                        bookings = get_user_bookings(chat_id)
-                        if not bookings:
-                            send_message(chat_id, "У вас поки немає активних записів.", reply_markup=main_keyboard)
-                        else:
-                            msg = "📋 <b>Ваші актуальні записи:</b>\n\n"
-                            cancel_kb = []
-                            for idx, b in enumerate(bookings, 1):
-                                msg += f"{idx}. <b>{b['service']}</b>\n   👤 {b['master']} | 📅 {b['date']} о {b['time']}\n\n"
-                                cancel_kb.append([{"text": f"❌ Скасувати: {b['service']}"}])
-                            cancel_kb.append([{"text": "⬅️ Назад до меню"}])
-                            send_message(chat_id, msg, reply_markup={"keyboard": cancel_kb, "resize_keyboard": True})
-                    elif text.startswith("❌ Скасувати: "):
-                        service_to_cancel = text.replace("❌ Скасувати: ", "").strip()
-                        success = cancel_user_booking(chat_id, service_to_cancel)
-                        if success:
-                            send_message(chat_id, f"✅ Запис на послугу <b>{service_to_cancel}</b> успішно скасовано.", reply_markup=main_keyboard)
-                        else:
-                            send_message(chat_id, "Не вдалося знайти такий запис.", reply_markup=main_keyboard)
-                    elif text == "ℹ️ Наші послуги":
-                        send_message(
-                            chat_id, 
-                            "📋 <b>Каталог послуг та цін BeautyFlow:</b>\n\n"
-                            "💅 <b>Манікюр з покриттям</b> — від 600 грн\n"
-                            "💇‍♀️ <b>Жіноча стрижка</b> — від 500 грн\n"
-                            "💄 <b>Весільний макіяж</b> — від 800 грн",
-                            reply_markup=main_keyboard
-                        )
-                    elif text == "📍 Контакти салону":
-                        send_message(
-                            chat_id, 
-                            "📍 <b>Салон краси BeautyFlow</b>\n\n"
-                            "🏙️ м. Київ, вул. Хрещатик, 1\n"
-                            "📞 Телефон: +380 (99) 123-45-67",
-                            reply_markup=main_keyboard
-                        )
-                    else:
-                        send_message(chat_id, "Будь ласка, скористайтеся кнопками нижче 👇", reply_markup=main_keyboard)
+            if "result" in response:
+                for result in response["result"]:
+                    offset = result["update_id"] + 1
+                    handle_update(result)
         except Exception as e:
-            print("Помилка:", e)
-            time.sleep(3)
+            print(f"Ошибка в цикле бота: {e}")
 
+
+# --- ГЛАВНЫЙ ЗАПУСК ---
 if __name__ == "__main__":
-    main()
+    # Запускаем Telegram-бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+
+    # Flask запускаем в главном потоке, чтобы Render видел открытый порт
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
