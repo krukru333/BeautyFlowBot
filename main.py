@@ -4,8 +4,8 @@ import threading
 from flask import Flask
 
 # Токен вашего бота и ID администратора
-TOKEN = "9200361744:AAGZd7cuSCgdm3Cw2tpU3QKqQbGNJennAvU"
-ADMIN_CHAT_ID = "7050276939"  # Замените при необходимости на ваш ID в Telegram
+TOKEN = "9200361744:AAGZd7cusCGdm3w2tpU3QKqQbGNJennAvU"
+ADMIN_CHAT_ID = "70502769390"  # Замените при необходимости на ваш ID в Telegram
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -42,9 +42,23 @@ def send_message(chat_id, text, reply_markup=None):
         payload["reply_markup"] = reply_markup
     requests.post(url, json=payload)
 
+def answer_callback(callback_query_id):
+    url = f"{BASE_URL}/answerCallbackQuery"
+    requests.post(url, json={"callback_query_id": callback_query_id})
+
 def save_booking(booking_info):
     with open("bookings.txt", "a", encoding="utf-8") as f:
         f.write(booking_info + "\n")
+
+
+def show_services(chat_id):
+    user_data[chat_id] = {}
+    services_text = "✨ <b>Добро пожаловать в салон красоты!</b>\nВыберите услугу:\n\n"
+    keyboard_inline = []
+    for key, val in SERVICES.items():
+        keyboard_inline.append([{"text": f"{val['name']} ({val['price']})", "callback_data": f"service_{key}"}])
+    
+    send_message(chat_id, services_text, {"inline_keyboard": keyboard_inline})
 
 
 # --- ОБРАБОТКА СООБЩЕНИЙ ---
@@ -54,15 +68,8 @@ def handle_update(update):
         chat_id = msg["chat"]["id"]
         text = msg.get("text", "")
 
-        if text == "/start":
-            user_data[chat_id] = {}
-            services_text = "✨ <b>Добро пожаловать в салон красоты!</b>\nВыберите услугу:\n\n"
-            keyboard_inline = []
-            for key, val in SERVICES.items():
-                services_text += f"{key}. {val['name']} — <b>{val['price']}</b>\n"
-                keyboard_inline.append([{"text": f"{val['name']} ({val['price']})", "callback_data": f"service_{key}"}])
-            
-            send_message(chat_id, services_text, {"inline_keyboard": keyboard_inline})
+        if text == "/start" or "Записатися" in text or "записаться" in text.lower():
+            show_services(chat_id)
 
         elif chat_id in user_data and user_data[chat_id].get("step") == "wait_time":
             user_data[chat_id]["time"] = text
@@ -100,6 +107,10 @@ def handle_update(update):
         query = update["callback_query"]
         chat_id = query["message"]["chat"]["id"]
         data = query["data"]
+        q_id = query["id"]
+
+        # Убираем анимацию загрузки с кнопки
+        answer_callback(q_id)
 
         if chat_id not in user_data:
             user_data[chat_id] = {}
