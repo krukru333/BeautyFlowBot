@@ -3,9 +3,9 @@ import requests
 import threading
 from flask import Flask
 
-# Замените на токен вашего бота от BotFather или используйте переменные окружения
-TOKEN = os.getenv "9200361744:AAGZd7cuSCgdm3Cw2tpU3QKqQbGNJennAvU"
-ADMIN_CHAT_ID = os.getenv "7050276939"
+# Токен вашего бота и ID администратора
+TOKEN = "9200361744:AAGZd7cuSCgdm3Cw2tpU3QKqQbGNJennAvU"
+ADMIN_CHAT_ID = "7050276939"  # Замените при необходимости на ваш ID в Telegram
 
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
@@ -84,7 +84,7 @@ def handle_update(update):
             )
             send_message(chat_id, success_text)
 
-            if ADMIN_CHAT_ID != "ВАШ_CHAT_ID":
+            if ADMIN_CHAT_ID != "0":
                 admin_text = (
                     f"🔔 <b>Новая запись в салон!</b>\n\n"
                     f"👤 Клиент: {client_name} (@{username})\n"
@@ -143,11 +143,9 @@ def run_bot():
 
 # --- ГЛАВНЫЙ ЗАПУСК ---
 if __name__ == "__main__":
-    # Запускаем Telegram-бота в отдельном потоке
     bot_thread = threading.Thread(target=run_bot)
     bot_thread.daemon = True
     bot_thread.start()
 
-    # Flask запускаем в главном потоке, чтобы Render видел открытый порт
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
